@@ -1,17 +1,19 @@
 /**
- * Cal.com data region (US vs. EU).
+ * Cal.com data region (US vs. EU) and optional self-hosted endpoint overrides.
  *
- * Stores the user-selected region so OAuth (`app.cal.{com|eu}`) and API
- * (`api.cal.{com|eu}`) calls can be routed to the correct infrastructure.
+ * For normal Cal.com builds, the app routes traffic by the user's selected
+ * region. For dedicated self-hosted builds, set both of these Expo public env
+ * variables and the hosted-region selection becomes irrelevant:
  *
- * Region is persisted in general storage and cached in memory for synchronous
- * access. Listeners are notified when the region changes so dependent modules
- * (API client, OAuth service) can refresh their base URLs.
+ * - EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL
+ * - EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL
  *
- * Link-construction rule: never inline literal `cal.com` / `cal.eu` hostnames
- * elsewhere in `apps/mobile/**`. Use the getters exported here
- * (`getCalAppUrl`, `getCalApiUrl`, `getCalWebUrl`, `getCalSupportUrl`,
- * `getCalHelpUrl`). A CI grep (`bun run check:no-cal-hostnames`) enforces this.
+ * Example:
+ *   APP URL:    https://calendar.example.com
+ *   API v2 URL: https://calendar.example.com/api/v2
+ *
+ * Link-construction rule: never inline literal Cal.com hostnames elsewhere in
+ * `apps/mobile/**`. Use the getters exported from this module.
  */
 
 import { Platform } from "react-native";
@@ -22,6 +24,37 @@ export type CalRegion = "us" | "eu";
 
 const REGION_STORAGE_KEY = "cal_region";
 const DEFAULT_REGION: CalRegion = "us";
+
+function normalizeUrl(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/\/+$/, "");
+}
+
+const SELF_HOSTED_APP_URL = normalizeUrl(process.env.EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL);
+const SELF_HOSTED_API_V2_URL = normalizeUrl(
+  process.env.EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL
+);
+
+/**
+ * True when this build has a complete self-hosted endpoint pair configured.
+ */
+export function isSelfHostedBuild(): boolean {
+  return Boolean(SELF_HOSTED_APP_URL && SELF_HOSTED_API_V2_URL);
+}
+
+/**
+ * Returns a configuration problem that should be surfaced to the operator.
+ * We intentionally don't throw at module import time so lint/typecheck and
+ * partially configured development environments remain usable.
+ */
+export function getSelfHostedConfigError(): string | null {
+  if (Boolean(SELF_HOSTED_APP_URL) === Boolean(SELF_HOSTED_API_V2_URL)) {
+    return null;
+  }
+
+  return "Self-hosted configuration is incomplete. Set both EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL and EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL.";
+}
 
 let currentRegion: CalRegion = DEFAULT_REGION;
 const listeners = new Set<(region: CalRegion) => void>();
@@ -85,14 +118,8 @@ export async function setRegion(region: CalRegion): Promise<void> {
 
 /**
  * Remove the persisted region selection and reset the in-memory cache to the
- * default. Intended for logout so the next user (who may belong to a different
- * region) is prompted via the login-screen picker instead of silently inheriting
- * the previous session's region.
- *
- * Writes go through `generalStorage` to stay symmetric with `setRegion()` — on
- * web this happens to wrap `localStorage`, so clearing there is already covered.
- * We always `notify()` because the persisted value may have diverged from the
- * in-memory cache (e.g. called before `preloadRegion()` resolved).
+ * default. Intended for logout so the next hosted Cal.com user can choose a
+ * region again. Self-hosted builds continue to use their configured endpoints.
  */
 export async function clearRegion(): Promise<void> {
   currentRegion = DEFAULT_REGION;
@@ -121,42 +148,59 @@ function notify(): void {
   }
 }
 
-/** Fully-qualified origin of the Cal.com web app for the current region. */
+/** Fully-qualified origin of the Cal.com/Cal.diy web app. */
 export function getCalAppUrl(region: CalRegion = currentRegion): string {
+  if (SELF_HOSTED_APP_URL) return SELF_HOSTED_APP_URL;
   return region === "eu" ? "https://app.cal.eu" : "https://app.cal.com";
 }
 
-/** Fully-qualified origin of the Cal.com API for the current region. */
+/**
+ * Base URL used by the API client before it appends `/v2`.
+ *
+ * The self-hosted env accepts either a full v2 URL (`.../api/v2`) or the base
+ * immediately before `/v2` (`.../api`). This keeps the existing request client
+ * compatible with both the hosted and self-hosted routing layouts.
+ */
 export function getCalApiUrl(region: CalRegion = currentRegion): string {
+  if (SELF_HOSTED_API_V2_URL) {
+    return SELF_HOSTED_API_V2_URL.endsWith("/v2")
+      ? SELF_HOSTED_API_V2_URL.slice(0, -3)
+      : SELF_HOSTED_API_V2_URL;
+  }
   return region === "eu" ? "https://api.cal.eu" : "https://api.cal.com";
 }
 
-/** Fully-qualified origin of the Cal.com marketing site for the current region. */
+/** Fully-qualified origin used for product/marketing links. */
 export function getCalWebUrl(region: CalRegion = currentRegion): string {
+  if (SELF_HOSTED_APP_URL) return SELF_HOSTED_APP_URL;
   return region === "eu" ? "https://cal.eu" : "https://cal.com";
 }
 
-/**
- * Cal.com support shortlink. Stays global — `go.cal.eu` does not exist, so
- * all regions currently point at the `go.cal.com` redirector.
- */
+/** Cal.com support shortlink. */
 export function getCalSupportUrl(): string {
   return "https://go.cal.com/support";
 }
 
-/**
- * Cal.com help-docs URL. Stays global — `cal.eu/help` is not mirrored, so
- * all regions currently point at `cal.com/help/*`. If Cal ever publishes an
- * EU-mirrored docs site, flip the return here.
- */
+/** Cal.com help-docs URL. */
 export function getCalHelpUrl(slug: string): string {
   const trimmed = slug.replace(/^\/+/, "");
   return `https://cal.com/help/${trimmed}`;
 }
 
+function getSelfHostedHostname(): string | null {
+  if (!SELF_HOSTED_APP_URL) return null;
+  try {
+    return new URL(SELF_HOSTED_APP_URL).hostname;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Returns the set of Cal.com app hostnames the app talks to across regions.
- * Useful for code (e.g. `appendStandaloneParam`) that needs to recognize any
- * Cal.com app URL regardless of the user's current region.
+ * App hostnames recognized by browser/deep-link helpers.
  */
-export const CAL_APP_HOSTNAMES: ReadonlySet<string> = new Set(["app.cal.com", "app.cal.eu"]);
+export const CAL_APP_HOSTNAMES: ReadonlySet<string> = new Set(
+  ["app.cal.com", "app.cal.eu", getSelfHostedHostname()].filter(
+    (hostname): hostname is string => Boolean(hostname)
+  )
+);
