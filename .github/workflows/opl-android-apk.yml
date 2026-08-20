@@ -1,0 +1,116 @@
+name: OPL Calendar Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - opl-selfhosted
+    paths:
+      - "apps/mobile/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/opl-android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-build:
+    name: Validate and build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: true
+      EXPO_NO_TELEMETRY: 1
+      EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL: ${{ vars.OPL_CALDIY_APP_URL }}
+      EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL: ${{ vars.OPL_CALDIY_API_V2_URL }}
+      EXPO_PUBLIC_CALCOM_OAUTH_CLIENT_ID: ${{ vars.OPL_CALDIY_OAUTH_CLIENT_ID }}
+      EXPO_PUBLIC_CALCOM_OAUTH_REDIRECT_URI: opl-calendar://oauth/callback
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Type check mobile app
+        run: bun --filter mobile typecheck
+
+      - name: Validate self-hosted build variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL \
+            EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL \
+            EXPO_PUBLIC_CALCOM_OAUTH_CLIENT_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::$name is not configured as a GitHub Actions repository variable"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Create CI Google services file
+        working-directory: apps/mobile
+        run: |
+          cat > google-services.ci.json <<'JSON'
+          {
+            "project_info": {
+              "project_number": "1",
+              "project_id": "opl-calendar-ci",
+              "storage_bucket": "opl-calendar-ci.appspot.com"
+            },
+            "client": [
+              {
+                "client_info": {
+                  "mobilesdk_app_id": "1:1:android:oplcalendar",
+                  "android_client_info": {
+                    "package_name": "com.oceanportlink.calendar"
+                  }
+                },
+                "oauth_client": [],
+                "api_key": [{ "current_key": "ci" }],
+                "services": {
+                  "appinvite_service": {
+                    "other_platform_oauth_client": []
+                  }
+                }
+              }
+            ],
+            "configuration_version": "1"
+          }
+          JSON
+          echo "GOOGLE_SERVICES_JSON=./google-services.ci.json" >> "$GITHUB_ENV"
+
+      - name: Generate Android project
+        working-directory: apps/mobile
+        run: EXPO_NO_GIT_STATUS=1 bunx expo prebuild --platform android --no-install --clean
+
+      - name: Build installable debug APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload OPL Calendar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: opl-calendar-android-apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
