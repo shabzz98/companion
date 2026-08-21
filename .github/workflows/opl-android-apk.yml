@@ -22,9 +22,9 @@ jobs:
     env:
       CI: true
       EXPO_NO_TELEMETRY: 1
-      EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL: ${{ vars.OPL_CALDIY_APP_URL }}
-      EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL: ${{ vars.OPL_CALDIY_API_V2_URL }}
-      EXPO_PUBLIC_CALCOM_OAUTH_CLIENT_ID: ${{ vars.OPL_CALDIY_OAUTH_CLIENT_ID }}
+      EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL: https://calendar.oceanportlink.com
+      EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL: https://calendar.oceanportlink.com/api/v2
+      EXPO_PUBLIC_CALCOM_OAUTH_CLIENT_ID: 0d61b02d56d2065931e0450afb7777535815bc36052fa909422a50ec840a6871
       EXPO_PUBLIC_CALCOM_OAUTH_REDIRECT_URI: opl-calendar://oauth/callback
 
     steps:
@@ -48,24 +48,35 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Adapt OAuth scopes for Cal.diy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("apps/mobile/services/oauthService.ts")
+          text = path.read_text()
+          hosted = (
+              '"EVENT_TYPE_READ EVENT_TYPE_WRITE BOOKING_READ BOOKING_WRITE '
+              'PROFILE_READ PROFILE_WRITE SCHEDULE_READ SCHEDULE_WRITE";'
+          )
+          self_hosted = '"READ_BOOKING READ_PROFILE";'
+          if hosted not in text:
+              raise SystemExit("Expected hosted Cal.com OAuth scope string was not found")
+          path.write_text(text.replace(hosted, self_hosted, 1))
+          PY
+
       - name: Type check mobile app
         run: bun --filter mobile typecheck
 
-      - name: Validate self-hosted build variables
+      - name: Validate self-hosted build configuration
         shell: bash
         run: |
           set -euo pipefail
-          missing=0
-          for name in \
-            EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL \
-            EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL \
-            EXPO_PUBLIC_CALCOM_OAUTH_CLIENT_ID; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "::error::$name is not configured as a GitHub Actions repository variable"
-              missing=1
-            fi
-          done
-          exit "$missing"
+          test -n "$EXPO_PUBLIC_CALCOM_SELF_HOSTED_APP_URL"
+          test -n "$EXPO_PUBLIC_CALCOM_SELF_HOSTED_API_V2_URL"
+          test -n "$EXPO_PUBLIC_CALCOM_OAUTH_CLIENT_ID"
+          test "$EXPO_PUBLIC_CALCOM_OAUTH_REDIRECT_URI" = "opl-calendar://oauth/callback"
 
       - name: Create CI Google services file
         working-directory: apps/mobile
