@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   validate-and-build:
-    name: Validate and build APK
+    name: Validate and build standalone APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -114,14 +114,14 @@ jobs:
         working-directory: apps/mobile
         run: EXPO_NO_GIT_STATUS=1 bunx expo prebuild --platform android --no-install --clean
 
-      - name: Build installable debug APK
+      - name: Build standalone release APK
         working-directory: apps/mobile/android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
 
-      - name: Upload OPL Calendar APK
+      - name: Upload OPL Calendar standalone APK
         uses: actions/upload-artifact@v4
         with:
-          name: opl-calendar-android-apk
-          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          name: opl-calendar-standalone-apk
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
           retention-days: 30
