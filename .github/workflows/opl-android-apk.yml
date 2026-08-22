@@ -60,7 +60,9 @@ jobs:
               '"EVENT_TYPE_READ EVENT_TYPE_WRITE BOOKING_READ BOOKING_WRITE '
               'PROFILE_READ PROFILE_WRITE SCHEDULE_READ SCHEDULE_WRITE";'
           )
-          self_hosted = '"READ_BOOKING READ_PROFILE";'
+          # Cal.diy's web OAuth authorize page parses the `scope` query param
+          # using comma separation (scope.split(",")), unlike hosted Cal.com.
+          self_hosted = '"READ_BOOKING,READ_PROFILE";'
           if hosted not in text:
               raise SystemExit("Expected hosted Cal.com OAuth scope string was not found")
           path.write_text(text.replace(hosted, self_hosted, 1))
