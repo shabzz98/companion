@@ -10,6 +10,8 @@ import {
   type CalRegion,
   getCalAppUrl,
   getRegion,
+  getSelfHostedConfigError,
+  isSelfHostedBuild,
   preloadRegion,
   setRegion,
   subscribeRegion,
@@ -36,23 +38,33 @@ export function LoginScreen() {
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const isDark = colorScheme === "dark";
+  const selfHosted = isSelfHostedBuild();
   const [region, setRegionState] = useState<CalRegion>(getRegion());
-  // Blocks the Continue CTA until the persisted region has been loaded, so
-  // a fast tap can't start an OAuth flow against the US default while the
-  // user's saved preference is still in flight.
-  const [regionPreloadPending, setRegionPreloadPending] = useState(true);
+  const [regionPreloadPending, setRegionPreloadPending] = useState(!selfHosted);
   const [regionTriggerWidth, setRegionTriggerWidth] = useState(0);
 
   useEffect(() => {
+    if (selfHosted) {
+      setRegionPreloadPending(false);
+      return undefined;
+    }
+
     preloadRegion().then((loaded) => {
       setRegionState(loaded);
       setRegionPreloadPending(false);
     });
     return subscribeRegion(setRegionState);
-  }, []);
+  }, [selfHosted]);
 
   const handleOAuthLogin = async () => {
     if (regionPreloadPending) return;
+
+    const selfHostedConfigError = getSelfHostedConfigError();
+    if (selfHostedConfigError) {
+      showErrorAlert("Configuration Error", selfHostedConfigError);
+      return;
+    }
+
     try {
       await loginWithOAuth();
     } catch (error) {
@@ -80,102 +92,112 @@ export function LoginScreen() {
 
   return (
     <View className="flex-1 bg-white dark:bg-black">
-      {/* Logo centered in the middle */}
       <View className="flex-1 items-center justify-center">
         <CalComLogo width={180} height={40} color={isDark ? "#FFFFFF" : "#111827"} />
-      </View>
-
-      {/* Bottom section with region select + CTA */}
-      <View className="px-6" style={{ paddingBottom: insets.bottom + 28 }}>
-        {/* Region picker */}
-        <View className="mb-5">
+        {selfHosted ? (
           <Text
-            className="mb-3 text-[13px] font-medium"
+            className="mt-4 text-[15px] font-medium"
             style={{ color: isDark ? "#A3A3A3" : "#6B7280" }}
           >
-            Data region
+            OPL Calendar
           </Text>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <TouchableOpacity
-                className="flex-row items-center justify-between rounded-xl border px-4 py-2.5"
-                onLayout={onRegionTriggerLayout}
-                style={{
-                  borderColor: isDark ? "#4D4D4D" : "#E5E7EB",
-                  backgroundColor: isDark ? "#171717" : "#FFFFFF",
-                }}
-                activeOpacity={0.8}
-              >
-                <Text
-                  className="text-[15px] font-medium"
-                  style={{ color: isDark ? "#FFFFFF" : "#111827" }}
-                >
-                  {getRegionLabel(region)}
-                </Text>
-                <Ionicons name="chevron-down" size={16} color={isDark ? "#A3A3A3" : "#6B7280"} />
-              </TouchableOpacity>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="start"
-              side="top"
-              sideOffset={4}
-              insets={{ top: insets.top + 8, bottom: insets.bottom + 120, left: 24, right: 24 }}
-              className="min-w-0 self-stretch rounded-xl p-0"
-              style={regionTriggerWidth > 0 ? { width: regionTriggerWidth } : undefined}
+        ) : null}
+      </View>
+
+      <View className="px-6" style={{ paddingBottom: insets.bottom + 28 }}>
+        {!selfHosted ? (
+          <View className="mb-5">
+            <Text
+              className="mb-3 text-[13px] font-medium"
+              style={{ color: isDark ? "#A3A3A3" : "#6B7280" }}
             >
-              {REGION_OPTIONS.map((option, index) => {
-                const selected = option.value === region;
-                return (
-                  <DropdownMenuItem
-                    key={option.value}
-                    className="gap-0 px-1 py-1 active:bg-transparent"
-                    onPress={() => handleRegionChange(option.value)}
+              Data region
+            </Text>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <TouchableOpacity
+                  className="flex-row items-center justify-between rounded-xl border px-4 py-2.5"
+                  onLayout={onRegionTriggerLayout}
+                  style={{
+                    borderColor: isDark ? "#4D4D4D" : "#E5E7EB",
+                    backgroundColor: isDark ? "#171717" : "#FFFFFF",
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    className="text-[15px] font-medium"
+                    style={{ color: isDark ? "#FFFFFF" : "#111827" }}
                   >
-                    <View
-                      className={`w-full flex-row items-center justify-between rounded-md px-2.5 py-1.5 ${
-                        index < REGION_OPTIONS.length - 1 ? "mb-0.5" : ""
-                      }`}
-                      style={{
-                        backgroundColor: selected
-                          ? isDark
-                            ? "#2C2C2E"
-                            : "#F3F4F6"
-                          : "transparent",
-                      }}
+                    {getRegionLabel(region)}
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={16}
+                    color={isDark ? "#A3A3A3" : "#6B7280"}
+                  />
+                </TouchableOpacity>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                side="top"
+                sideOffset={4}
+                insets={{ top: insets.top + 8, bottom: insets.bottom + 120, left: 24, right: 24 }}
+                className="min-w-0 self-stretch rounded-xl p-0"
+                style={regionTriggerWidth > 0 ? { width: regionTriggerWidth } : undefined}
+              >
+                {REGION_OPTIONS.map((option, index) => {
+                  const selected = option.value === region;
+                  return (
+                    <DropdownMenuItem
+                      key={option.value}
+                      className="gap-0 px-1 py-1 active:bg-transparent"
+                      onPress={() => handleRegionChange(option.value)}
                     >
-                      <Text
-                        className="flex-1 pr-1.5 text-[15px] leading-5"
+                      <View
+                        className={`w-full flex-row items-center justify-between rounded-md px-2.5 py-1.5 ${
+                          index < REGION_OPTIONS.length - 1 ? "mb-0.5" : ""
+                        }`}
                         style={{
-                          color: selected
+                          backgroundColor: selected
                             ? isDark
-                              ? "#FFFFFF"
-                              : "#111827"
-                            : isDark
-                              ? "#E5E7EB"
-                              : "#374151",
-                          fontWeight: selected ? "600" : "400",
+                              ? "#2C2C2E"
+                              : "#F3F4F6"
+                            : "transparent",
                         }}
                       >
-                        {option.label}
-                      </Text>
-                      <View className="w-4 items-end justify-center">
-                        {selected ? (
-                          <Ionicons
-                            name="checkmark"
-                            size={16}
-                            color={isDark ? "#FFFFFF" : "#111827"}
-                          />
-                        ) : null}
+                        <Text
+                          className="flex-1 pr-1.5 text-[15px] leading-5"
+                          style={{
+                            color: selected
+                              ? isDark
+                                ? "#FFFFFF"
+                                : "#111827"
+                              : isDark
+                                ? "#E5E7EB"
+                                : "#374151",
+                            fontWeight: selected ? "600" : "400",
+                          }}
+                        >
+                          {option.label}
+                        </Text>
+                        <View className="w-4 items-end justify-center">
+                          {selected ? (
+                            <Ionicons
+                              name="checkmark"
+                              size={16}
+                              color={isDark ? "#FFFFFF" : "#111827"}
+                            />
+                          ) : null}
+                        </View>
                       </View>
-                    </View>
-                  </DropdownMenuItem>
-                );
-              })}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </View>
+                    </DropdownMenuItem>
+                  );
+                })}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </View>
+        ) : null}
 
-        {/* Primary CTA button */}
         <TouchableOpacity
           onPress={handleOAuthLogin}
           disabled={loading || regionPreloadPending}
@@ -205,12 +227,11 @@ export function LoginScreen() {
             className="text-[17px] font-semibold"
             style={{ color: isDark ? "#000000" : "#FFFFFF" }}
           >
-            Continue with Cal.com
+            {selfHosted ? "Continue to OPL Calendar" : "Continue with Cal.com"}
           </Text>
         </TouchableOpacity>
 
-        {/* Sign up link - hidden on iOS */}
-        {Platform.OS !== "ios" && (
+        {!selfHosted && Platform.OS !== "ios" ? (
           <TouchableOpacity
             onPress={handleSignUp}
             className="mt-3 items-center justify-center py-1"
@@ -225,7 +246,7 @@ export function LoginScreen() {
               <View className="h-px bg-gray-400 dark:bg-[#4D4D4D]" style={{ marginTop: 2 }} />
             </View>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     </View>
   );
